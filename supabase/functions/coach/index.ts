@@ -49,9 +49,23 @@ interface CoachRequest {
   notes?: CoachNote[]
 }
 
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, apikey, content-type',
+// Only browser pages from these origins may call the function. Any other
+// website open in the same browser could otherwise spend the OpenAI key.
+const DEFAULT_ALLOWED_ORIGIN = /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/
+
+function isAllowedOrigin(origin: string | null): boolean {
+  if (!origin) return true // same-origin and non-browser clients send no Origin header
+  const configured = Deno.env.get('COACH_ALLOWED_ORIGINS')
+  if (configured) return configured.split(',').map((entry) => entry.trim()).filter(Boolean).includes(origin)
+  return DEFAULT_ALLOWED_ORIGIN.test(origin)
+}
+
+function corsHeaders(origin: string | null): Record<string, string> {
+  return {
+    'Access-Control-Allow-Origin': origin ?? '*',
+    'Vary': 'Origin',
+    'Access-Control-Allow-Headers': 'authorization, apikey, content-type',
+  }
 }
 
 function normalizeName(value: string): string {
@@ -118,12 +132,17 @@ function draftContext(draft: CoachDraft): string {
 }
 
 Deno.serve(async (request) => {
-  if (request.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
-  if (request.method !== 'POST') return Response.json({ error: 'Method not allowed' }, { status: 405, headers: corsHeaders })
+  const origin = request.headers.get('origin')
+  if (!isAllowedOrigin(origin)) {
+    return Response.json({ error: 'Origin not allowed.' }, { status: 403 })
+  }
+  const headers = corsHeaders(origin)
+  if (request.method === 'OPTIONS') return new Response('ok', { headers })
+  if (request.method !== 'POST') return Response.json({ error: 'Method not allowed' }, { status: 405, headers })
 
   try {
     const apiKey = Deno.env.get('OPENAI_API_KEY')
-    if (!apiKey) return Response.json({ error: 'OPENAI_API_KEY is not configured for the coach function.' }, { status: 503, headers: corsHeaders })
+    if (!apiKey) return Response.json({ error: 'OPENAI_API_KEY is not configured for the coach function.' }, { status: 503, headers })
     setDefaultOpenAIKey(apiKey)
     setTracingExportApiKey(apiKey)
     const body = await request.json() as CoachRequest
@@ -133,7 +152,7 @@ Deno.serve(async (request) => {
     const pool = Array.isArray(body.players) ? body.players.slice(0, 300) : []
     const notes = Array.isArray(body.notes) ? body.notes.slice(0, 12) : []
     if (drafts.length === 0 || messages.length === 0) {
-      return Response.json({ error: 'Draft context and a message are required.' }, { status: 400, headers: corsHeaders })
+      return Response.json({ error: 'Draft context and a message are required.' }, { status: 400, headers })
     }
 
     const replayTool = tool({
@@ -168,9 +187,9 @@ Distinguish evidence from inference. Be direct but constructive. Reference round
     const transcript = messages.map((message) => `${message.role.toUpperCase()}: ${message.content}`).join('\n')
     const result = await run(coach, `SCOPE: ${body.scope}\n\n${drafts.map(draftContext).join('\n\n')}${notesContext}\n\nCONVERSATION:\n${transcript}`)
     const answer = typeof result.finalOutput === 'string' ? result.finalOutput : JSON.stringify(result.finalOutput)
-    return Response.json({ answer }, { headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    return Response.json({ answer }, { headers: { ...headers, 'Content-Type': 'application/json' } })
   } catch (error) {
     const message = error instanceof Error ? error.message : 'The coach failed to respond.'
-    return Response.json({ error: message }, { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } })
+    return Response.json({ error: message }, { status: 500, headers: { ...headers, 'Content-Type': 'application/json' } })
   }
 })

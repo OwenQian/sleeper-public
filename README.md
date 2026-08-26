@@ -27,6 +27,8 @@ Copy the local `ANON_KEY` (or `PUBLISHABLE_KEY`) from `npm run supabase:status` 
 
 To use the coach, add `OPENAI_API_KEY` to `.env.local`, then run `npm run coach:serve` in a second terminal alongside `npm run dev`. The key has no `VITE_` prefix and is read only by the local Supabase Edge Function. `OPENAI_COACH_MODEL` defaults to `gpt-5.6` and can be changed in `.env.local`. Supabase Studio is available at `http://127.0.0.1:54323`.
 
+The coach function only accepts browser requests from `localhost`/`127.0.0.1` origins, so other websites open in your browser cannot spend your OpenAI key while the stack is running. Set `COACH_ALLOWED_ORIGINS` (comma-separated) in `.env.local` if you serve the app from a different origin.
+
 ## Draft workflow
 
 1. Reorder players within a tier with the card arrows; drag a card onto another tier to change tiers.
