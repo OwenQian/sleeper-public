@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowRight, CloudDownload, Link2, RefreshCw, X } from 'lucide-react'
+import { ArrowRight, CloudDownload, Link2, RefreshCw, Trash2, X } from 'lucide-react'
 import type { DraftHistoryStore } from '../lib/draftStore'
 import { importSleeperDrafts } from '../lib/draftImport'
 import {
@@ -7,8 +7,8 @@ import {
   parseSleeperMockImportIds,
 } from '../lib/mockHistoryImport'
 import type { Player, SavedDraft } from '../types'
+import type { CoachMemoryStore } from '../lib/coachMemoryStore'
 import { CoachPanel } from './CoachPanel'
-import draftConfig from '../data/draft-config.json'
 
 interface DraftsPageProps {
   store: DraftHistoryStore | null
@@ -18,6 +18,7 @@ interface DraftsPageProps {
   importMockDrafts?: typeof importSleeperMockDraftIds
   leagueId?: string | null
   players?: Player[]
+  coachMemoryStore?: CoachMemoryStore | null
 }
 
 function isMockDraft(draft: SavedDraft): boolean {
@@ -31,8 +32,9 @@ export function DraftsPage({
   autoImport = true,
   importDrafts = importSleeperDrafts,
   importMockDrafts = importSleeperMockDraftIds,
-  leagueId = draftConfig.leagueId,
+  leagueId = null,
   players = [],
+  coachMemoryStore = null,
 }: DraftsPageProps) {
   const [drafts, setDrafts] = useState<SavedDraft[]>([])
   const [status, setStatus] = useState<'loading' | 'ready' | 'importing' | 'error'>(store ? 'loading' : 'ready')
@@ -40,6 +42,7 @@ export function DraftsPage({
   const [coachOpen, setCoachOpen] = useState(false)
   const [mockImportOpen, setMockImportOpen] = useState(false)
   const [mockImportInput, setMockImportInput] = useState('')
+  const [deletingDraftId, setDeletingDraftId] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     if (!store) return
@@ -89,6 +92,26 @@ export function DraftsPage({
       setSyncMessage(error instanceof Error ? error.message : 'Practice mock import failed.')
     }
   }, [importMockDrafts, leagueId, load, mockImportInput, store])
+
+  const deleteDraft = useCallback(async (draft: SavedDraft) => {
+    if (!store || deletingDraftId) return
+    const confirmed = window.confirm(`Delete “${draft.name}” from your draft history? This cannot be undone.`)
+    if (!confirmed) return
+
+    setDeletingDraftId(draft.draftId)
+    setSyncMessage('')
+    try {
+      await store.delete(draft.draftId)
+      setDrafts((current) => current.filter((saved) => saved.draftId !== draft.draftId))
+      setStatus('ready')
+      setSyncMessage(`Deleted “${draft.name}” from draft history.`)
+    } catch (error) {
+      setStatus('error')
+      setSyncMessage(error instanceof Error ? error.message : 'Draft deletion failed.')
+    } finally {
+      setDeletingDraftId(null)
+    }
+  }, [deletingDraftId, store])
 
   useEffect(() => {
     let active = true
@@ -155,15 +178,26 @@ export function DraftsPage({
               <p>{draft.picks.length} picks · {draft.rounds} rounds · Slot {draft.draftSlot ?? '—'}</p>
               <div className="draft-history-card__footer">
                 <time dateTime={draft.createdAt ?? draft.syncedAt}>{new Date(draft.createdAt ?? draft.syncedAt).toLocaleDateString()}</time>
-                <button type="button" className="button button--quiet" aria-label={`Review ${draft.name}`} onClick={() => onOpenDraft(draft.draftId)}>
-                  Review <ArrowRight size={15} />
-                </button>
+                <div className="draft-history-card__actions">
+                  <button
+                    type="button"
+                    className="button button--quiet draft-history-card__delete"
+                    aria-label={`Delete ${draft.name}`}
+                    disabled={deletingDraftId !== null}
+                    onClick={() => void deleteDraft(draft)}
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                  <button type="button" className="button button--quiet" aria-label={`Review ${draft.name}`} onClick={() => onOpenDraft(draft.draftId)}>
+                    Review <ArrowRight size={15} />
+                  </button>
+                </div>
               </div>
             </article>
           ))}
         </section>
       )}
-      {coachOpen && <CoachPanel scope="history" drafts={drafts.slice(0, 8)} players={players} onClose={() => setCoachOpen(false)} />}
+      {coachOpen && <CoachPanel scope="history" drafts={drafts.slice(0, 8)} players={players} memoryStore={coachMemoryStore} onClose={() => setCoachOpen(false)} />}
       {mockImportOpen && (
         <div className="sync-backdrop" onMouseDown={(event) => { if (event.target === event.currentTarget) setMockImportOpen(false) }}>
           <section className="sync-panel" role="dialog" aria-modal="true" aria-label="Import Sleeper practice mocks">

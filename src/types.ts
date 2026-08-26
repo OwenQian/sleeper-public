@@ -29,6 +29,8 @@ export interface Player {
   unavailableSource?: 'manual' | 'sleeper'
   rankingEdited?: boolean
   note?: string
+  sourceNote?: string
+  noteEdited?: boolean
   injuryStatus?: string | null
   depthChartOrder?: number | null
   yearsExperience?: number | null

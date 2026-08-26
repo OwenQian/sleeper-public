@@ -14,3 +14,9 @@ Suggestions:
 
 The dev server picks up new files automatically; restart `npm run dev` if a
 brand-new file does not appear.
+
+The numbered 2026 notes in this directory are an original coaching synthesis
+of the user-supplied Late-Round Fantasy Football 2026 Draft Guide. They are
+ordered so core process and grading instructions load before position and
+player notes. Player news is dated through the guide's August 21 update and
+should be treated as a snapshot, not a live news feed.

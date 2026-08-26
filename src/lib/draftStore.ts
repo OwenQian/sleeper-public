@@ -10,6 +10,7 @@ export interface DraftHistoryStore {
   list: (limit?: number) => Promise<SavedDraft[]>
   get: (draftId: string) => Promise<SavedDraft | null>
   save: (draft: SavedDraft) => Promise<void>
+  delete: (draftId: string) => Promise<void>
 }
 
 export interface DraftRow {
@@ -140,6 +141,13 @@ export function createSupabaseDraftStore(
       const { error } = await client
         .from('drafts')
         .upsert(toDraftRow(scopedDraft), { onConflict: 'id' })
+      if (error) throw error
+    },
+    async delete(draftId) {
+      const { error } = await client
+        .from('drafts')
+        .delete()
+        .eq('id', draftRecordId(draftId, identity.userId))
       if (error) throw error
     },
   }

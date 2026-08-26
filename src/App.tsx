@@ -22,19 +22,23 @@ import {
   Unplug,
   X,
 } from 'lucide-react'
-import rankingsCsv from './data/rankings.csv?raw'
-import draftConfig from './data/draft-config.json'
-import { mergeStoredPlayers, type BoardStore } from './lib/boardStore'
+import type { BoardStore } from './lib/boardStore'
+import {
+  BOARD_STORAGE_KEY,
+  readLocalBoardSnapshot,
+  selectInitialBoard,
+} from './lib/boardBootstrap'
 import { savedDraftFromSleeper, type DraftHistoryStore } from './lib/draftStore'
+import type { CoachMemoryStore } from './lib/coachMemoryStore'
 import { buildDraftResultsMarkdown, formatRoundPick } from './lib/draftResults'
 import {
   deriveFlexTiers,
   derivePositionTiers,
   filterPlayers,
   groupPlayersByDraftPick,
+  hydrateGuideNotes,
   movePlayerWithinTier,
   movePlayerToTier,
-  parseRankingsCsv,
   resetPlayers,
   resetPlayerRanking,
   sortPlayersByAdp,
@@ -56,7 +60,7 @@ import {
   getTeamSchedule,
   resolvePickAttribution,
 } from './lib/sleeper'
-import { createConfiguredBoardStore, createConfiguredDraftHistoryStore } from './lib/supabase'
+import { createConfiguredBoardStore, createConfiguredCoachMemoryStore, createConfiguredDraftHistoryStore } from './lib/supabase'
 import type {
   Player,
   PlayerTag,
@@ -67,10 +71,13 @@ import type {
 } from './types'
 import { DraftsPage } from './components/DraftsPage'
 import { DraftDetailPage } from './components/DraftDetailPage'
+import { RankingsImportPanel } from './components/RankingsImportPanel'
 import { parseAppRoute } from './lib/navigation'
+import { readDraftConfigEnv } from './lib/draftConfig'
 
-const STORAGE_KEY = 'draft-room-2026-half-ppr-v1'
 const POSITIONS: PositionFilter[] = ['ALL', 'QB', 'RB', 'WR', 'TE', 'FLEX', 'K', 'DEF']
+
+const draftConfig = readDraftConfigEnv(import.meta.env)
 
 const LEAGUE_SIZE = draftConfig.leagueSize
 const DRAFT_SLOT = draftConfig.draftSlot
@@ -102,24 +109,15 @@ interface AppProps {
   draftPickFetcher?: typeof fetchDraftPicks
 }
 
-function loadPlayers(csv: string): Player[] {
-  const sourcePlayers = derivePositionTiers(parseRankingsCsv(csv))
-  try {
-    const stored = localStorage.getItem(STORAGE_KEY)
-    if (!stored) return sourcePlayers
-    const saved = JSON.parse(stored) as Player[]
-    return mergeStoredPlayers(sourcePlayers, saved)
-  } catch {
-    return sourcePlayers
-  }
-}
-
-export default function App({ initialCsv = rankingsCsv, disableNetwork = false, boardStore, draftHistoryStore, draftPickFetcher = fetchDraftPicks }: AppProps) {
+export default function App({ initialCsv = '', disableNetwork = false, boardStore, draftHistoryStore, draftPickFetcher = fetchDraftPicks }: AppProps) {
   const configuredBoardStore = useMemo(
     () => boardStore === undefined ? createConfiguredBoardStore() : boardStore,
     [boardStore],
   )
-  const [players, setPlayers] = useState<Player[]>(() => loadPlayers(initialCsv))
+  const initialLocalSnapshot = useRef(readLocalBoardSnapshot())
+  const [players, setPlayers] = useState<Player[]>(() =>
+    selectInitialBoard(initialLocalSnapshot.current, initialCsv).players,
+  )
   const [storeHydrated, setStoreHydrated] = useState(configuredBoardStore === null)
   const [boardMode, setBoardMode] = useState<'tiers' | 'picks' | 'adp'>('tiers')
   const [position, setPosition] = useState<PositionFilter>('ALL')
@@ -134,6 +132,7 @@ export default function App({ initialCsv = rankingsCsv, disableNetwork = false, 
   )
   const [draftSyncOpen, setDraftSyncOpen] = useState(false)
   const [resetOpen, setResetOpen] = useState(false)
+  const [rankingsImportOpen, setRankingsImportOpen] = useState(false)
   const [draftId, setDraftId] = useState<string | null>(null)
   const [draftPicks, setDraftPicks] = useState<SleeperPick[]>([])
   const [draftParticipants, setDraftParticipants] = useState<Record<string, string>>({})
@@ -141,6 +140,7 @@ export default function App({ initialCsv = rankingsCsv, disableNetwork = false, 
   const [draftError, setDraftError] = useState('')
   const [draftSyncing, setDraftSyncing] = useState(false)
   const [historyStore, setHistoryStore] = useState<DraftHistoryStore | null>(draftHistoryStore ?? null)
+  const [coachMemoryStore, setCoachMemoryStore] = useState<CoachMemoryStore | null>(null)
   const [route, setRoute] = useState(() => parseAppRoute(window.location.pathname))
   const draftSyncNowRef = useRef<(() => void) | null>(null)
 
@@ -159,6 +159,9 @@ export default function App({ initialCsv = rankingsCsv, disableNetwork = false, 
     void createConfiguredDraftHistoryStore()
       .then((store) => { if (active) setHistoryStore(store) })
       .catch(() => { if (active) setHistoryStore(null) })
+    void createConfiguredCoachMemoryStore()
+      .then((store) => { if (active) setCoachMemoryStore(store) })
+      .catch(() => { if (active) setCoachMemoryStore(null) })
     return () => { active = false }
   }, [draftHistoryStore])
 
@@ -174,11 +177,11 @@ export default function App({ initialCsv = rankingsCsv, disableNetwork = false, 
       .then(async (snapshot) => {
         if (!active) return
         if (snapshot?.players) {
-          setPlayers((current) => mergeStoredPlayers(current, snapshot.players))
+          setPlayers(hydrateGuideNotes(snapshot.players))
         } else {
-          const legacyPlayers = loadPlayers(initialCsv)
-          setPlayers(legacyPlayers)
-          await configuredBoardStore.save({ players: legacyPlayers })
+          const initialBoard = selectInitialBoard(initialLocalSnapshot.current, initialCsv)
+          setPlayers(initialBoard.players)
+          await configuredBoardStore.save(initialBoard)
         }
       })
       .catch(() => {
@@ -191,14 +194,14 @@ export default function App({ initialCsv = rankingsCsv, disableNetwork = false, 
 
   useEffect(() => {
     if (!configuredBoardStore) {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(players))
+      localStorage.setItem(BOARD_STORAGE_KEY, JSON.stringify(players))
       return
     }
     if (!storeHydrated) return
 
     const timeout = window.setTimeout(() => {
       void configuredBoardStore.save({ players }).catch(() => {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(players))
+        localStorage.setItem(BOARD_STORAGE_KEY, JSON.stringify(players))
       })
     }, 400)
     return () => window.clearTimeout(timeout)
@@ -406,11 +409,13 @@ export default function App({ initialCsv = rankingsCsv, disableNetwork = false, 
         <DraftsPage
           store={historyStore}
           autoImport={!disableNetwork}
+          leagueId={draftConfig.leagueId}
           players={players}
+          coachMemoryStore={coachMemoryStore}
           onOpenDraft={(selectedDraftId) => navigate(`/drafts/${selectedDraftId}`)}
         />
       ) : route.page === 'draft' ? (
-        <DraftDetailPage draftId={route.draftId} store={historyStore} players={players} onBack={() => navigate('/drafts')} />
+        <DraftDetailPage draftId={route.draftId} store={historyStore} players={players} coachMemoryStore={coachMemoryStore} onBack={() => navigate('/drafts')} />
       ) : <>
       <main>
         <section className="hero">
@@ -458,6 +463,7 @@ export default function App({ initialCsv = rankingsCsv, disableNetwork = false, 
             />
             <span><EyeOff size={15} /> Hide unavailable</span>
           </label>
+          <button type="button" className="button button--quiet" onClick={() => setRankingsImportOpen(true)}>Import CSV</button>
           <button type="button" className="button button--quiet" onClick={() => setResetOpen(true)}>Reset</button>
         </section>
 
@@ -472,7 +478,11 @@ export default function App({ initialCsv = rankingsCsv, disableNetwork = false, 
           </div>
 
           {visiblePlayers.length === 0 ? (
-            <EmptyBoard position={position} hideUnavailable={hideUnavailable} />
+            <EmptyBoard
+              position={position}
+              hideUnavailable={hideUnavailable}
+              onImport={players.length === 0 ? () => setRankingsImportOpen(true) : undefined}
+            />
           ) : boardMode === 'picks' ? pickGroups.map((group) => (
             <PickWindowGroup
               key={group.overallPick ?? 'unranked'}
@@ -557,6 +567,17 @@ export default function App({ initialCsv = rankingsCsv, disableNetwork = false, 
         />
       )}
 
+      {rankingsImportOpen && (
+        <RankingsImportPanel
+          currentPlayers={players}
+          onClose={() => setRankingsImportOpen(false)}
+          onApply={(importedPlayers) => {
+            setPlayers(importedPlayers)
+            setRankingsImportOpen(false)
+          }}
+        />
+      )}
+
       {draftId && !draftSyncOpen && (
         <button type="button" className="sync-toast" onClick={() => setDraftSyncOpen(true)}>
           <span className={draftStatus === 'live' ? 'live-dot' : 'live-dot live-dot--waiting'} />
@@ -573,25 +594,40 @@ function Stat({ value, label, accent = false }: { value: string | number; label:
   return <div className={accent ? 'stat stat--accent' : 'stat'}><strong>{value}</strong><span>{label}</span></div>
 }
 
-function EmptyBoard({ position, hideUnavailable }: { position: PositionFilter; hideUnavailable: boolean }) {
+function EmptyBoard({
+  position,
+  hideUnavailable,
+  onImport,
+}: {
+  position: PositionFilter
+  hideUnavailable: boolean
+  onImport?: () => void
+}) {
   return (
     <div className="empty-board">
       <div><Eye size={25} /></div>
       <h2>No {position === 'ALL' ? '' : position} players to show</h2>
-      <p>{position === 'K' || position === 'DEF' ? 'The supplied rankings do not include kickers or defenses.' : hideUnavailable ? 'Try showing unavailable players or clearing your search.' : 'Clear your search to see the board.'}</p>
+      <p>{onImport ? 'Import a rankings CSV to create your draft board.' : position === 'K' || position === 'DEF' ? 'The supplied rankings do not include kickers or defenses.' : hideUnavailable ? 'Try showing unavailable players or clearing your search.' : 'Clear your search to see the board.'}</p>
+      {onImport && <button type="button" className="button button--hot" onClick={onImport}>Import rankings CSV</button>}
     </div>
   )
 }
 
 function ResetPanel({ onClose, onReset }: { onClose: () => void; onReset: (selection: ResetSelection) => void }) {
-  const [selection, setSelection] = useState<ResetSelection>({ rankings: true, tags: false, all: false })
-  const setOption = (option: 'rankings' | 'tags', checked: boolean) => {
+  const [selection, setSelection] = useState<ResetSelection>({
+    rankings: true,
+    tags: false,
+    notes: false,
+    availability: false,
+    all: false,
+  })
+  const setOption = (option: 'rankings' | 'tags' | 'notes' | 'availability', checked: boolean) => {
     setSelection((current) => ({ ...current, [option]: checked, all: false }))
   }
   const setAll = (checked: boolean) => {
     setSelection(checked
-      ? { rankings: false, tags: false, all: true }
-      : { rankings: false, tags: false, all: false })
+      ? { rankings: false, tags: false, notes: false, availability: false, all: true }
+      : { rankings: false, tags: false, notes: false, availability: false, all: false })
   }
 
   return (
@@ -610,16 +646,24 @@ function ResetPanel({ onClose, onReset }: { onClose: () => void; onReset: (selec
             <input aria-label="Tags" type="checkbox" checked={selection.tags} onChange={(event) => setOption('tags', event.target.checked)} />
             <span><strong>Tags</strong><small>Remove every target, avoid, and player trait tag.</small></span>
           </label>
+          <label className="reset-option">
+            <input aria-label="Reset notes" type="checkbox" checked={selection.notes} onChange={(event) => setOption('notes', event.target.checked)} />
+            <span><strong>Reset notes</strong><small>Remove every player note.</small></span>
+          </label>
+          <label className="reset-option">
+            <input aria-label="Reset availability" type="checkbox" checked={selection.availability} onChange={(event) => setOption('availability', event.target.checked)} />
+            <span><strong>Reset availability</strong><small>Restore every player to the board.</small></span>
+          </label>
           <label className="reset-option reset-option--all">
             <input aria-label="Reset all" type="checkbox" checked={selection.all} onChange={(event) => setAll(event.target.checked)} />
-            <span><strong>Reset all</strong><small>Reset rankings, tags, notes, and availability.</small></span>
+            <span><strong>Reset all</strong><small>Reset rankings, tags, and availability; restore pre-populated guide notes.</small></span>
           </label>
           <div className="reset-panel__actions">
             <button type="button" className="button button--quiet" onClick={onClose}>Cancel</button>
             <button
               type="button"
               className="button button--dark"
-              disabled={!selection.rankings && !selection.tags && !selection.all}
+              disabled={!selection.rankings && !selection.tags && !selection.notes && !selection.availability && !selection.all}
               onClick={() => onReset(selection)}
             >
               Apply reset
@@ -1043,7 +1087,7 @@ function PlayerDetails({ player, catalog, schedule, onClose, onToggleTag, onUpda
           </div>
           <label className="notes-field">
             <span>Draft note</span>
-            <textarea value={player.note ?? ''} onChange={(event) => onUpdate({ note: event.target.value })} placeholder="What would make you pull the trigger?" />
+            <textarea value={player.note ?? ''} onChange={(event) => onUpdate({ note: event.target.value, noteEdited: true })} placeholder="What would make you pull the trigger?" />
           </label>
         </section>
 

@@ -1,5 +1,7 @@
 import type { Player, SavedDraft } from '../types'
 import { loadCoachNotes, type CoachNote } from './coachNotes'
+import type { CoachMemory } from './coachMemoryStore'
+import { readSupabaseBrowserConfig } from './supabaseConfig'
 
 export type CoachScope = 'history' | 'draft'
 
@@ -13,9 +15,19 @@ export interface CoachPoolPlayer {
   name: string
   position: string
   rank: number
+  overallTier: number
   positionTier: number
   adp?: number
   team?: string
+  tags?: string[]
+  note?: string
+}
+
+export interface CoachMemorySummary {
+  content: string
+  role: 'user' | 'assistant'
+  draftName: string | null
+  savedAt: string
 }
 
 export interface CoachPayload {
@@ -24,6 +36,7 @@ export interface CoachPayload {
   messages: CoachMessage[]
   players: CoachPoolPlayer[]
   notes: CoachNote[]
+  memories: CoachMemorySummary[]
 }
 
 export interface CoachPreset {
@@ -46,6 +59,17 @@ use the playback feature to go through each pick and grade the pick relative to 
 export type CoachClient = (payload: CoachPayload) => Promise<string>
 
 const PLAYER_POOL_LIMIT = 300
+const MEMORY_LIMIT = 40
+const MEMORY_CONTENT_LIMIT = 4000
+
+export function toCoachMemorySummary(memory: CoachMemory): CoachMemorySummary {
+  return {
+    content: memory.content.slice(0, MEMORY_CONTENT_LIMIT),
+    role: memory.role,
+    draftName: memory.draftName,
+    savedAt: memory.createdAt,
+  }
+}
 
 export function buildCoachPayload(
   scope: CoachScope,
@@ -53,6 +77,7 @@ export function buildCoachPayload(
   messages: CoachMessage[],
   players: Player[] = [],
   notes: CoachNote[] = loadCoachNotes(),
+  memories: CoachMemory[] = [],
 ): CoachPayload {
   const newestFirst = [...drafts].sort((left, right) =>
     new Date(right.createdAt ?? right.syncedAt).getTime() - new Date(left.createdAt ?? left.syncedAt).getTime(),
@@ -65,34 +90,46 @@ export function buildCoachPayload(
       name: player.name,
       position: player.position,
       rank: player.rank,
+      overallTier: player.overallTier,
       positionTier: player.positionTier,
       adp: player.adp,
       team: player.team,
+      tags: player.tags.length > 0 ? player.tags : undefined,
+      note: player.note?.trim() ? player.note.trim().slice(0, 240) : undefined,
     }))
+  const recentMemories = [...memories]
+    .sort((left, right) => new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime())
+    .slice(0, MEMORY_LIMIT)
+    .map(toCoachMemorySummary)
   return {
     scope,
     drafts: scope === 'history' ? newestFirst.slice(0, 8) : newestFirst.slice(0, 1),
     messages,
     players: pool,
     notes,
+    memories: recentMemories,
   }
 }
 
 export const requestCoach: CoachClient = async (payload) => {
-  const supabaseUrl = import.meta.env.VITE_SUPABASE_URL?.trim()
-  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim()
-  if (!supabaseUrl || !anonKey) throw new Error('Connect local Supabase before starting the coach.')
+  const config = readSupabaseBrowserConfig(import.meta.env)
+  if (!config) throw new Error('Connect local Supabase before starting the coach.')
 
-  const response = await fetch(`${supabaseUrl}/functions/v1/coach`, {
+  const response = await fetch(`${config.url}/functions/v1/coach`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
-      Authorization: `Bearer ${anonKey}`,
-      apikey: anonKey,
+      Authorization: `Bearer ${config.key}`,
+      apikey: config.key,
     },
     body: JSON.stringify(payload),
   })
-  const result = await response.json() as { answer?: string; error?: string }
-  if (!response.ok || !result.answer) throw new Error(result.error ?? 'The coach could not answer right now.')
+  const result = await response.json() as { answer?: string; error?: string; message?: string }
+  if (!response.ok || !result.answer) {
+    if (!result.error && response.status >= 500) {
+      throw new Error('The coach service is offline. Start it with `npm run coach:serve`.')
+    }
+    throw new Error(result.error ?? result.message ?? 'The coach could not answer right now.')
+  }
   return result.answer
 }

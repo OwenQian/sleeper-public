@@ -7,6 +7,8 @@ import {
 import { fetchSleeperUser } from './sleeper'
 import type { SleeperUser } from '../types'
 import { createSupabaseDraftStore, type DraftHistoryStore } from './draftStore'
+import { createSupabaseCoachMemoryStore, type CoachMemoryStore } from './coachMemoryStore'
+import { readSupabaseBrowserConfig } from './supabaseConfig'
 
 interface UsernameBoardIdentity {
   leagueId?: string
@@ -52,25 +54,35 @@ function createUsernameBoardStore(
 }
 
 export function createConfiguredBoardStore(): BoardStore | null {
-  const url = import.meta.env.VITE_SUPABASE_URL?.trim()
-  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim()
-  if (!url || !anonKey) return null
+  const config = readSupabaseBrowserConfig(import.meta.env)
+  if (!config) return null
 
-  return createUsernameBoardStore(createClient(url, anonKey), {
+  return createUsernameBoardStore(createClient(config.url, config.key), {
     leagueId: import.meta.env.VITE_SLEEPER_LEAGUE_ID,
     username: import.meta.env.VITE_SLEEPER_USERNAME,
   })
 }
 
 export function createConfiguredDraftHistoryStore(): Promise<DraftHistoryStore | null> {
-  const url = import.meta.env.VITE_SUPABASE_URL?.trim()
-  const anonKey = import.meta.env.VITE_SUPABASE_ANON_KEY?.trim()
-  if (!url || !anonKey) return Promise.resolve(null)
+  const config = readSupabaseBrowserConfig(import.meta.env)
+  if (!config) return Promise.resolve(null)
 
   return resolveBoardIdentityFromUsername({
     leagueId: import.meta.env.VITE_SLEEPER_LEAGUE_ID,
     username: import.meta.env.VITE_SLEEPER_USERNAME,
   }).then((identity) => identity.userId
-    ? createSupabaseDraftStore(createClient(url, anonKey), { userId: identity.userId })
+    ? createSupabaseDraftStore(createClient(config.url, config.key), { userId: identity.userId })
+    : null)
+}
+
+export function createConfiguredCoachMemoryStore(): Promise<CoachMemoryStore | null> {
+  const config = readSupabaseBrowserConfig(import.meta.env)
+  if (!config) return Promise.resolve(null)
+
+  return resolveBoardIdentityFromUsername({
+    leagueId: import.meta.env.VITE_SLEEPER_LEAGUE_ID,
+    username: import.meta.env.VITE_SLEEPER_USERNAME,
+  }).then((identity) => identity.userId
+    ? createSupabaseCoachMemoryStore(createClient(config.url, config.key), { userId: identity.userId })
     : null)
 }
