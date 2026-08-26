@@ -2,19 +2,39 @@
 
 An interactive half-PPR draft companion built around your rankings. It combines a persistent personal tier board with live Sleeper data and a public mock-draft pick feed.
 
-## Add your rankings CSV
+![Tier board with color-coded positions, tier grouping, and live Sleeper ADP](docs/screenshots/tier-board.png)
 
-1. Create the `src/data` folder if it does not already exist.
-2. In Finder, drag your rankings CSV into `src/data`.
-3. Rename the file to `rankings.csv`.
+<details>
+<summary>More screenshots</summary>
 
-The CSV must use these columns in this order: `Overall`, `Player`, `Position`, `Pos Rank`, `Tier`, and `Auction (Out of $200)`. The app imports `src/data/rankings.csv` at build time, so add the file before running the app. The entire `src/data` folder is ignored by Git to keep rankings and generated draft configuration out of the repository.
+**Pick windows** — players grouped by your upcoming snake-draft picks:
+
+![Pick windows view grouping players by upcoming snake picks](docs/screenshots/pick-windows.png)
+
+**Sleeper ADP** — a flat board sorted lowest to highest ADP:
+
+![Sleeper ADP view sorted lowest to highest](docs/screenshots/sleeper-adp.png)
+
+</details>
+
+## Set up `src/data`
+
+The app imports two local files from `src/data` at build time, so the dev server, production builds, and tests all fail until both exist. The entire `src/data` folder is ignored by Git to keep your rankings and generated draft configuration out of the repository.
+
+```bash
+mkdir -p src/data
+cp rankings.example.csv src/data/rankings.csv
+cp draft-config.example.json src/data/draft-config.json
+```
+
+`rankings.example.csv` is a small sample board (the screenshots above use it) so the app runs out of the box. Swap in your own rankings whenever you're ready: drag your CSV into `src/data` and name it `rankings.csv`. The CSV must use these columns in this order: `Overall`, `Player`, `Position`, `Pos Rank`, `Tier`, and `Auction (Out of $200)`. `draft-config.json` is refreshed automatically from Sleeper before dev and build runs once your league is configured, so the copied example only needs to exist.
 
 ## Run it
 
 ```bash
 npm install
 mkdir -p src/data
+cp rankings.example.csv src/data/rankings.csv
 cp draft-config.example.json src/data/draft-config.json
 cp .env.example .env.local
 npm run supabase:start
