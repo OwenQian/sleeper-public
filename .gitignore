@@ -1,0 +1,10 @@
+node_modules/
+dist/
+tmp/
+/src/data/
+/coach-notes/*.md
+!/coach-notes/README.md
+.DS_Store
+.env.local
+.env.*.local
+.env

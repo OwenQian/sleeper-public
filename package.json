@@ -1,0 +1,43 @@
+{
+  "name": "sleeper-draft-room",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "sync:draft-config": "node --env-file-if-exists=.env.local scripts/sync-draft-config.mjs",
+    "predev": "npm run sync:draft-config",
+    "dev": "vite",
+    "predev:local": "npm run sync:draft-config",
+    "dev:local": "supabase start && vite",
+    "prebuild": "npm run sync:draft-config",
+    "build": "tsc -b && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc -b --pretty false",
+    "coach:serve": "supabase functions serve coach --env-file .env.local",
+    "supabase:start": "supabase start",
+    "supabase:migrate": "supabase migration up --local",
+    "supabase:stop": "supabase stop",
+    "supabase:status": "supabase status",
+    "supabase:reset": "supabase db reset"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.112.4",
+    "@vitejs/plugin-react": "6.1.0",
+    "lucide-react": "^0.468.0",
+    "react": "19.2.8",
+    "react-dom": "19.2.8",
+    "typescript": "7.0.2",
+    "vite": "8.2.2"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "^6.6.3",
+    "@testing-library/react": "^16.1.0",
+    "@testing-library/user-event": "^14.5.2",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "jsdom": "^25.0.1",
+    "supabase": "^2.115.0",
+    "vitest": "4.1.11"
+  }
+}

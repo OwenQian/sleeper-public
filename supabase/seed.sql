@@ -1,0 +1,1 @@
+-- Board state is created by the app on first save.
