@@ -3,6 +3,7 @@ import {
   derivePositionTiers,
   filterPlayers,
   groupPlayersByDraftPick,
+  hydrateGuideNotes,
   movePlayer,
   movePlayerWithinTier,
   parseRankingsCsv,
@@ -10,6 +11,7 @@ import {
   resetPlayerRanking,
   sortPlayersByAdp,
 } from './rankings'
+import { buildGuideNoteLookup } from './guidePlayerNotes'
 import type { Player } from '../types'
 
 const csv = `Overall,Player,Position,Pos Rank,Tier,Auction (Out of $200)
@@ -19,7 +21,12 @@ const csv = `Overall,Player,Position,Pos Rank,Tier,Auction (Out of $200)
 4,Josh Allen,QB,1,8,$29
 5,Lamar Jackson,QB,2,11,$17`
 
-const makePlayers = (): Player[] => parseRankingsCsv(csv)
+const guideNoteFixture = {
+  'Jahmyr Gibbs': 'Sample guide note: workhorse back in a fast offense.',
+  'Lamar Jackson': 'Sample guide note: dual-threat quarterback with a high weekly floor.',
+}
+
+const makePlayers = (): Player[] => parseRankingsCsv(csv, buildGuideNoteLookup(guideNoteFixture))
 
 describe('parseRankingsCsv', () => {
   it('turns source rows into typed draft players', () => {
@@ -33,6 +40,53 @@ describe('parseRankingsCsv', () => {
       overallTier: 2,
       auctionValue: 59,
     })
+  })
+
+  it('pre-populates guide notes for players covered by the draft guide', () => {
+    const [gibbs] = makePlayers()
+
+    expect(gibbs.note).toBe(guideNoteFixture['Jahmyr Gibbs'])
+    expect(gibbs.sourceNote).toBe(gibbs.note)
+  })
+})
+
+describe('hydrateGuideNotes', () => {
+  const lookup = buildGuideNoteLookup(guideNoteFixture)
+  const legacyPlayer = (overrides: Partial<Player>): Player => ({
+    ...makePlayers()[0],
+    note: undefined,
+    sourceNote: undefined,
+    noteEdited: undefined,
+    ...overrides,
+  })
+
+  it('fills blank unedited notes with the guide note and attaches sourceNote', () => {
+    const [missing, blank] = hydrateGuideNotes([
+      legacyPlayer({}),
+      legacyPlayer({ note: '' }),
+    ], lookup)
+
+    expect(missing.note).toBe(guideNoteFixture['Jahmyr Gibbs'])
+    expect(blank.note).toBe(guideNoteFixture['Jahmyr Gibbs'])
+    expect(blank.sourceNote).toBe(blank.note)
+  })
+
+  it('keeps intentionally cleared and user-written notes', () => {
+    const [cleared, custom] = hydrateGuideNotes([
+      legacyPlayer({ note: '', noteEdited: true }),
+      legacyPlayer({ note: 'My own take', noteEdited: true }),
+    ], lookup)
+
+    expect(cleared.note).toBe('')
+    expect(custom.note).toBe('My own take')
+  })
+
+  it('refreshes notes that still match their stored source note', () => {
+    const [player] = hydrateGuideNotes([
+      legacyPlayer({ note: 'Old guide text', sourceNote: 'Old guide text' }),
+    ], lookup)
+
+    expect(player.note).toBe(guideNoteFixture['Jahmyr Gibbs'])
   })
 })
 
@@ -141,7 +195,13 @@ describe('resetPlayers', () => {
   }
 
   it('resets rankings while preserving tags, notes, and availability', () => {
-    const reset = resetPlayers(editedPlayers(), { rankings: true, tags: false, all: false })
+    const reset = resetPlayers(editedPlayers(), {
+      rankings: true,
+      tags: false,
+      notes: false,
+      availability: false,
+      all: false,
+    })
     const lamar = reset.find((player) => player.name === 'Lamar Jackson')!
 
     expect(reset.map((player) => player.name)).toEqual(makePlayers().map((player) => player.name))
@@ -150,21 +210,77 @@ describe('resetPlayers', () => {
 
   it('resets tags without changing rankings or other personal state', () => {
     const edited = editedPlayers()
-    const reset = resetPlayers(edited, { rankings: false, tags: true, all: false })
+    const reset = resetPlayers(edited, {
+      rankings: false,
+      tags: true,
+      notes: false,
+      availability: false,
+      all: false,
+    })
     const lamar = reset.find((player) => player.name === 'Lamar Jackson')!
 
     expect(reset.map((player) => player.name)).toEqual(edited.map((player) => player.name))
     expect(lamar).toMatchObject({ tags: [], note: 'Keep me', unavailable: true, rankingEdited: true })
   })
 
+  it('resets notes without changing rankings or other personal state', () => {
+    const edited = editedPlayers()
+    const reset = resetPlayers(edited, {
+      rankings: false,
+      tags: false,
+      notes: true,
+      availability: false,
+      all: false,
+    })
+    const lamar = reset.find((player) => player.name === 'Lamar Jackson')!
+
+    expect(reset.map((player) => player.name)).toEqual(edited.map((player) => player.name))
+    expect(lamar).toMatchObject({ tags: ['target'], unavailable: true, rankingEdited: true })
+    expect(lamar.note).toBe(lamar.sourceNote)
+  })
+
+  it('resets availability without changing rankings or other personal state', () => {
+    const edited = editedPlayers()
+    const reset = resetPlayers(edited, {
+      rankings: false,
+      tags: false,
+      notes: false,
+      availability: true,
+      all: false,
+    })
+    const lamar = reset.find((player) => player.name === 'Lamar Jackson')!
+
+    expect(reset.map((player) => player.name)).toEqual(edited.map((player) => player.name))
+    expect(lamar).toMatchObject({ tags: ['target'], note: 'Keep me', unavailable: false, rankingEdited: true })
+    expect(lamar.unavailableSource).toBeUndefined()
+  })
+
   it('resets all personal state and rankings', () => {
-    const reset = resetPlayers(editedPlayers(), { rankings: false, tags: false, all: true })
+    const reset = resetPlayers(editedPlayers(), {
+      rankings: false,
+      tags: false,
+      notes: false,
+      availability: false,
+      all: true,
+    })
     const lamar = reset.find((player) => player.name === 'Lamar Jackson')!
 
     expect(reset.map((player) => player.name)).toEqual(makePlayers().map((player) => player.name))
     expect(lamar).toMatchObject({ tags: [], unavailable: false, rankingEdited: false })
-    expect(lamar.note).toBeUndefined()
+    expect(lamar.note).toBe(lamar.sourceNote)
     expect(lamar.unavailableSource).toBeUndefined()
+  })
+
+  it('restores a pre-populated guide note during a full reset', () => {
+    const players = makePlayers().map((player) =>
+      player.name === 'Jahmyr Gibbs' ? { ...player, note: 'My edited note' } : player,
+    )
+
+    const reset = resetPlayers(players, { rankings: false, tags: false, notes: false, availability: false, all: true })
+    const gibbs = reset.find((player) => player.name === 'Jahmyr Gibbs')!
+
+    expect(gibbs.note).toBe(gibbs.sourceNote)
+    expect(gibbs.note).toBe(guideNoteFixture['Jahmyr Gibbs'])
   })
 })
 

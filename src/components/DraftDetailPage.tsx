@@ -2,14 +2,16 @@ import { useEffect, useMemo, useState } from 'react'
 import { ArrowLeft, History, RotateCcw } from 'lucide-react'
 import type { DraftHistoryStore } from '../lib/draftStore'
 import { formatRoundPick } from '../lib/draftResults'
-import { buildReplayState } from '../lib/draftReplay'
+import { buildReplayState, calculateTeamAuctionPower } from '../lib/draftReplay'
 import type { Player, SavedDraft, SleeperPick } from '../types'
+import type { CoachMemoryStore } from '../lib/coachMemoryStore'
 import { CoachPanel } from './CoachPanel'
 
 interface DraftDetailPageProps {
   draftId: string
   store: DraftHistoryStore | null
   players: Player[]
+  coachMemoryStore?: CoachMemoryStore | null
   onBack: () => void
 }
 
@@ -17,7 +19,7 @@ function pickName(pick: SleeperPick): string {
   return `${pick.metadata?.first_name ?? ''} ${pick.metadata?.last_name ?? ''}`.trim() || pick.player_id
 }
 
-export function DraftDetailPage({ draftId, store, players, onBack }: DraftDetailPageProps) {
+export function DraftDetailPage({ draftId, store, players, coachMemoryStore = null, onBack }: DraftDetailPageProps) {
   const [draft, setDraft] = useState<SavedDraft | null>(null)
   const [loading, setLoading] = useState(true)
   const [selectedPick, setSelectedPick] = useState<SleeperPick | null>(null)
@@ -40,6 +42,10 @@ export function DraftDetailPage({ draftId, store, players, onBack }: DraftDetail
   const replay = useMemo(
     () => draft ? buildReplayState(draft, players, replayPickNo ?? Number.POSITIVE_INFINITY) : null,
     [draft, players, replayPickNo],
+  )
+  const teamAuctionPower = useMemo(
+    () => draft ? calculateTeamAuctionPower(draft, players) : {},
+    [draft, players],
   )
 
   if (loading) return <main className="draft-detail-page"><div className="history-empty"><h1>Loading draft</h1></div></main>
@@ -84,7 +90,9 @@ export function DraftDetailPage({ draftId, store, players, onBack }: DraftDetail
               : draft.participants[draft.picks.find((pick) => pick.draft_slot === slot && pick.picked_by)?.picked_by ?? '']
             return (
               <div className={slot === draft.draftSlot ? 'draft-team-header draft-team-header--you' : 'draft-team-header'} data-testid="draft-team-header" key={slot} style={{ gridColumn: slot, gridRow: 1 }}>
-                <strong>{slotOwner ?? `Team ${slot}`}</strong><span>Slot {slot}</span>
+                <strong>{slotOwner ?? `Team ${slot}`}</strong>
+                <span>Slot {slot}</span>
+                <span className="draft-team-power">Power ${teamAuctionPower[slot] ?? 0}</span>
               </div>
             )
           })}
@@ -124,7 +132,7 @@ export function DraftDetailPage({ draftId, store, players, onBack }: DraftDetail
           </div>
         </section>
       )}
-      {coachOpen && <CoachPanel scope="draft" drafts={[draft]} players={players} onClose={() => setCoachOpen(false)} />}
+      {coachOpen && <CoachPanel scope="draft" drafts={[draft]} players={players} memoryStore={coachMemoryStore} onClose={() => setCoachOpen(false)} />}
     </main>
   )
 }

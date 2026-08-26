@@ -1,4 +1,5 @@
 import type { Player, Position, PositionFilter } from '../types'
+import { guidePlayerNote } from './guidePlayerNotes'
 
 const FLEX_POSITIONS = new Set<Position>(['RB', 'WR', 'TE'])
 
@@ -10,7 +11,7 @@ export interface DraftPickGroup {
   players: Player[]
 }
 
-function parseCsvRow(row: string): string[] {
+export function parseCsvRow(row: string): string[] {
   const cells: string[] = []
   let cell = ''
   let quoted = false
@@ -42,10 +43,14 @@ function makeId(name: string, position: string): string {
     .replace(/(^-|-$)/g, '')
 }
 
-export function parseRankingsCsv(csv: string): Player[] {
+export function parseRankingsCsv(
+  csv: string,
+  noteLookup: (name: string) => string | undefined = guidePlayerNote,
+): Player[] {
   const rows = csv.replace(/^\uFEFF/, '').trim().split(/\r?\n/)
   return rows.slice(1).map((row) => {
     const [overall, name, position, positionRank, tier, auction] = parseCsvRow(row)
+    const sourceNote = noteLookup(name)
     return {
       id: makeId(name, position),
       name,
@@ -59,6 +64,25 @@ export function parseRankingsCsv(csv: string): Player[] {
       auctionValue: Number(auction.replace(/[^\d.]/g, '')),
       tags: [],
       unavailable: false,
+      note: sourceNote,
+      sourceNote,
+    }
+  })
+}
+
+export function hydrateGuideNotes(
+  players: Player[],
+  noteLookup: (name: string) => string | undefined = guidePlayerNote,
+): Player[] {
+  return players.map((player) => {
+    const sourceNote = noteLookup(player.name)
+    const noteIsBlank = player.note === undefined || player.note.trim() === ''
+    const noteIsDefault = (noteIsBlank && !player.noteEdited)
+      || (player.sourceNote !== undefined && player.note === player.sourceNote)
+    return {
+      ...player,
+      sourceNote,
+      note: noteIsDefault ? sourceNote : player.note,
     }
   })
 }
@@ -262,6 +286,8 @@ export function resetPlayerRanking(players: Player[], playerId: string): Player[
 export interface ResetSelection {
   rankings: boolean
   tags: boolean
+  notes: boolean
+  availability: boolean
   all: boolean
 }
 
@@ -269,9 +295,10 @@ export function resetPlayers(players: Player[], selection: ResetSelection): Play
   let reset: Player[] = players.map((player) => ({
     ...player,
     tags: selection.tags || selection.all ? [] : player.tags,
-    note: selection.all ? undefined : player.note,
-    unavailable: selection.all ? false : player.unavailable,
-    unavailableSource: selection.all ? undefined : player.unavailableSource,
+    note: selection.notes || selection.all ? player.sourceNote : player.note,
+    noteEdited: selection.notes || selection.all ? false : player.noteEdited,
+    unavailable: selection.availability || selection.all ? false : player.unavailable,
+    unavailableSource: selection.availability || selection.all ? undefined : player.unavailableSource,
   }))
 
   if (selection.rankings || selection.all) {

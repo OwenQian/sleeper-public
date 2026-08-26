@@ -31,14 +31,24 @@ interface CoachPoolPlayer {
   name: string
   position: string
   rank: number
+  overallTier?: number
   positionTier: number
   adp?: number
   team?: string
+  tags?: string[]
+  note?: string
 }
 
 interface CoachNote {
   name: string
   content: string
+}
+
+interface CoachMemorySummary {
+  content: string
+  role: 'user' | 'assistant'
+  draftName: string | null
+  savedAt: string
 }
 
 interface CoachRequest {
@@ -47,6 +57,7 @@ interface CoachRequest {
   messages: CoachMessage[]
   players?: CoachPoolPlayer[]
   notes?: CoachNote[]
+  memories?: CoachMemorySummary[]
 }
 
 // Only browser pages from these origins may call the function. Any other
@@ -123,6 +134,22 @@ function replaySnapshot(draft: CoachDraft, pool: CoachPoolPlayer[], pickNo: numb
   }
 }
 
+function describePoolPlayer(player: CoachPoolPlayer): string {
+  const details = [
+    `overall tier ${player.overallTier ?? '?'}`,
+    `${player.position} tier ${player.positionTier}`,
+    player.adp !== undefined ? `ADP ${player.adp}` : null,
+    player.tags?.length ? `tags: ${player.tags.join('/')}` : null,
+    player.note ? `note: ${player.note}` : null,
+  ].filter(Boolean).join(', ')
+  return `${player.rank}. ${player.name} (${player.position}${player.team ? ` ${player.team}` : ''}) — ${details}`
+}
+
+function boardContext(pool: CoachPoolPlayer[]): string {
+  if (pool.length === 0) return ''
+  return `\n\nUSER'S PRE-DRAFT BOARD (the user's own personal rankings — rank 1 is their top player; tiers, tags, and notes are theirs, not market consensus):\n${pool.slice(0, 150).map(describePoolPlayer).join('\n')}`
+}
+
 function draftContext(draft: CoachDraft): string {
   const picks = [...draft.picks]
     .sort((left, right) => left.pick_no - right.pick_no)
@@ -151,6 +178,7 @@ Deno.serve(async (request) => {
     const messages = Array.isArray(body.messages) ? body.messages.slice(-20) : []
     const pool = Array.isArray(body.players) ? body.players.slice(0, 300) : []
     const notes = Array.isArray(body.notes) ? body.notes.slice(0, 12) : []
+    const memories = Array.isArray(body.memories) ? body.memories.slice(0, 40) : []
     if (drafts.length === 0 || messages.length === 0) {
       return Response.json({ error: 'Draft context and a message are required.' }, { status: 400, headers })
     }
@@ -177,15 +205,22 @@ Deno.serve(async (request) => {
 LEAGUE SETTINGS: 0.5 PPR (half-PPR) scoring. Starting lineup: 1 QB, 2 RB, 2 WR, 1 TE, 1 FLEX, 1 K, 1 DST. Judge positional value, scarcity, and roster construction against these requirements — e.g. a third RB or WR (or second TE) competes for the single FLEX spot.
 Use only the supplied draft evidence. Identify concrete patterns in position timing, roster construction, reaches, values, and alternatives visible at each turn.
 You have a playback tool, replay_draft_at_pick, that reconstructs the exact board state when any pick was on the clock. When grading picks or naming alternatives, call it for each pick you evaluate — especially the user's picks — instead of guessing who was available. The user's picks are the ones at their draft slot.
+The USER'S PRE-DRAFT BOARD section and the player pool behind the playback tool are the user's own rankings: rank, overall tier, and position tier reflect how the user personally valued players before the draft, with their own tags and notes attached. Use them to judge whether a pick matched the user's own tiers and stated takes — e.g. a pick is only a reach relative to their board if they ranked others in the same or a higher tier above him. ADP is included for market context.
+Treat rank as the user's preferred player order: a lower rank number means the player is ranked more highly. For every pick you evaluate, consider the rankings of the players who were still available, identify the highest-ranked relevant alternatives, and cite their rank numbers when comparing them with the selection.
+If you recommend a lower-ranked player over a higher-ranked available player, explicitly explain why roster construction or positional value justifies overriding the rankings.
 If a COACH'S NOTES section is present, treat it as the user's own strategy and league knowledge: apply it when judging picks and cite the note by name when it changes a grade.
+If a SAVED MEMORIES section is present, it holds insights the user chose to keep from earlier coaching sessions. Treat them as established prior conclusions: stay consistent with them, build on them, and point out when new evidence contradicts one.
 Distinguish evidence from inference. Be direct but constructive. Reference round.pick notation and player names. Do not invent injuries, ADP, news, or outcomes that are absent from the data.`,
     })
 
     const notesContext = notes.length > 0
       ? `\n\nCOACH'S NOTES:\n${notes.map((note) => `### ${note.name}\n${note.content}`).join('\n\n')}`
       : ''
+    const memoryContext = memories.length > 0
+      ? `\n\nSAVED MEMORIES (newest first):\n${memories.map((memory) => `- [${memory.savedAt.slice(0, 10)}${memory.draftName ? ` · ${memory.draftName}` : ''} · ${memory.role}] ${memory.content}`).join('\n')}`
+      : ''
     const transcript = messages.map((message) => `${message.role.toUpperCase()}: ${message.content}`).join('\n')
-    const result = await run(coach, `SCOPE: ${body.scope}\n\n${drafts.map(draftContext).join('\n\n')}${notesContext}\n\nCONVERSATION:\n${transcript}`)
+    const result = await run(coach, `SCOPE: ${body.scope}\n\n${drafts.map(draftContext).join('\n\n')}${boardContext(pool)}${notesContext}${memoryContext}\n\nCONVERSATION:\n${transcript}`)
     const answer = typeof result.finalOutput === 'string' ? result.finalOutput : JSON.stringify(result.finalOutput)
     return Response.json({ answer }, { headers: { ...headers, 'Content-Type': 'application/json' } })
   } catch (error) {

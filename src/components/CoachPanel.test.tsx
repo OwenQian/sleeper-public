@@ -28,6 +28,19 @@ describe('CoachPanel', () => {
     }))
   })
 
+  it('renders coach Markdown as formatted content', async () => {
+    const user = userEvent.setup()
+    const client = vi.fn().mockResolvedValue('### Priority\n\n- Draft a **wide receiver** earlier.')
+    render(<CoachPanel scope="draft" drafts={[draft]} onClose={() => undefined} client={client} />)
+
+    await user.type(screen.getByLabelText('Message your coach'), 'What should I change?')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+
+    expect(await screen.findByRole('heading', { name: 'Priority', level: 3 })).toBeInTheDocument()
+    expect(screen.getByRole('list')).toBeInTheDocument()
+    expect(screen.getByText('wide receiver').tagName).toBe('STRONG')
+  })
+
   it('sends the grading preset prompt with players and notes when the chip is clicked', async () => {
     const user = userEvent.setup()
     const client = vi.fn().mockResolvedValue('Your draft grades out at 82/100.')
@@ -59,6 +72,78 @@ describe('CoachPanel', () => {
     await screen.findByText('Noted.')
 
     expect(screen.queryByRole('button', { name: /Grade my draft/ })).not.toBeInTheDocument()
+  })
+
+  it('saves a coach message to memory and includes memories in later requests', async () => {
+    const user = userEvent.setup()
+    const client = vi.fn().mockResolvedValue('Trade up for elite tight ends.')
+    const savedMemory = {
+      id: 'memory-1', content: 'Trade up for elite tight ends.', role: 'assistant' as const,
+      scope: 'draft' as const, draftId: 'draft-1', draftName: 'Tuesday mock',
+      createdAt: '2026-08-26T12:00:00.000Z',
+    }
+    const memoryStore = {
+      userId: 'user-1',
+      list: vi.fn().mockResolvedValue([]),
+      save: vi.fn().mockResolvedValue(savedMemory),
+      delete: vi.fn(),
+    }
+    render(<CoachPanel scope="draft" drafts={[draft]} memoryStore={memoryStore} onClose={() => undefined} client={client} />)
+
+    await user.type(screen.getByLabelText('Message your coach'), 'What should I change?')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await screen.findByText('Trade up for elite tight ends.')
+    const saveButtons = screen.getAllByRole('button', { name: 'Save to coach memory' })
+    await user.click(saveButtons[saveButtons.length - 1])
+
+    expect(await screen.findByRole('button', { name: 'Saved to coach memory' })).toBeDisabled()
+    expect(memoryStore.save).toHaveBeenCalledWith({
+      content: 'Trade up for elite tight ends.',
+      role: 'assistant',
+      scope: 'draft',
+      draftId: 'draft-1',
+      draftName: 'Tuesday mock',
+    })
+
+    await user.type(screen.getByLabelText('Message your coach'), 'Anything else?')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    const secondPayload = client.mock.calls[1][0]
+    expect(secondPayload.memories).toEqual([{
+      content: 'Trade up for elite tight ends.',
+      role: 'assistant',
+      draftName: 'Tuesday mock',
+      savedAt: '2026-08-26T12:00:00.000Z',
+    }])
+  })
+
+  it('hides memory saving when no memory store is configured', async () => {
+    const user = userEvent.setup()
+    const client = vi.fn().mockResolvedValue('Noted.')
+    render(<CoachPanel scope="draft" drafts={[draft]} onClose={() => undefined} client={client} />)
+
+    await user.type(screen.getByLabelText('Message your coach'), 'Review my draft.')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await screen.findByText('Noted.')
+
+    expect(screen.queryByRole('button', { name: 'Save to coach memory' })).not.toBeInTheDocument()
+  })
+
+  it('copies the conversation to the clipboard as a transcript', async () => {
+    const user = userEvent.setup()
+    const client = vi.fn().mockResolvedValue('Take a WR at the 3-4 turn.')
+    render(<CoachPanel scope="draft" drafts={[draft]} onClose={() => undefined} client={client} />)
+
+    expect(screen.getByRole('button', { name: 'Copy chat to clipboard' })).toBeDisabled()
+
+    await user.type(screen.getByLabelText('Message your coach'), 'What should I change?')
+    await user.click(screen.getByRole('button', { name: 'Send' }))
+    await screen.findByText('Take a WR at the 3-4 turn.')
+    await user.click(screen.getByRole('button', { name: 'Copy chat to clipboard' }))
+
+    expect(await screen.findByRole('button', { name: 'Chat copied' })).toBeInTheDocument()
+    await expect(window.navigator.clipboard.readText()).resolves.toBe(
+      'You:\nWhat should I change?\n\n---\n\nCoach:\nTake a WR at the 3-4 turn.',
+    )
   })
 
   it('offers no presets for history scope', () => {

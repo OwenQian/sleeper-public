@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest'
-import { buildCoachPayload, COACH_PRESETS } from './coach'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { buildCoachPayload, COACH_PRESETS, requestCoach } from './coach'
+import type { CoachMemory } from './coachMemoryStore'
 import type { Player, SavedDraft } from '../types'
 
 function draft(index: number): SavedDraft {
@@ -45,17 +46,21 @@ describe('buildCoachPayload', () => {
       .toEqual(['draft-2', 'draft-1'])
   })
 
-  it('includes a compact ranked player pool for the playback tool', () => {
+  it('includes the user board with tiers, tags, and notes for the playback tool', () => {
     const player = (rank: number): Player => ({
       id: `player-${rank}`, sleeperId: `${1000 + rank}`, name: `Player ${rank}`, position: 'RB',
       sourcePositionRank: rank, rank, overallTier: 1, positionTier: 2, auctionValue: 10,
       adp: rank + 0.5, team: 'SF', tags: [], unavailable: false,
     })
-    const payload = buildCoachPayload('draft', [draft(1)], [], [player(2), player(1)], [])
+    const tagged: Player = { ...player(1), tags: ['target'], note: '  League winner upside.  ' }
+    const payload = buildCoachPayload('draft', [draft(1)], [], [player(2), tagged], [])
 
     expect(payload.players).toEqual([
-      { sleeperId: '1001', name: 'Player 1', position: 'RB', rank: 1, positionTier: 2, adp: 1.5, team: 'SF' },
-      { sleeperId: '1002', name: 'Player 2', position: 'RB', rank: 2, positionTier: 2, adp: 2.5, team: 'SF' },
+      {
+        sleeperId: '1001', name: 'Player 1', position: 'RB', rank: 1, overallTier: 1,
+        positionTier: 2, adp: 1.5, team: 'SF', tags: ['target'], note: 'League winner upside.',
+      },
+      { sleeperId: '1002', name: 'Player 2', position: 'RB', rank: 2, overallTier: 1, positionTier: 2, adp: 2.5, team: 'SF' },
     ])
   })
 
@@ -76,6 +81,21 @@ describe('buildCoachPayload', () => {
 
     expect(buildCoachPayload('draft', [draft(1)], [], [], notes).notes).toEqual(notes)
   })
+
+  it('summarizes saved memories newest-first in the payload', () => {
+    const memory = (index: number): CoachMemory => ({
+      id: `memory-${index}`, content: `Insight ${index}`, role: 'assistant', scope: 'draft',
+      draftId: 'draft-1', draftName: 'Tuesday mock',
+      createdAt: new Date(Date.UTC(2026, 7, index)).toISOString(),
+    })
+
+    const payload = buildCoachPayload('draft', [draft(1)], [], [], [], [memory(1), memory(2)])
+
+    expect(payload.memories).toEqual([
+      { content: 'Insight 2', role: 'assistant', draftName: 'Tuesday mock', savedAt: '2026-08-02T00:00:00.000Z' },
+      { content: 'Insight 1', role: 'assistant', draftName: 'Tuesday mock', savedAt: '2026-08-01T00:00:00.000Z' },
+    ])
+  })
 })
 
 describe('COACH_PRESETS', () => {
@@ -84,5 +104,25 @@ describe('COACH_PRESETS', () => {
 
     expect(preset?.prompt).toContain('give my draft a score out of 100')
     expect(preset?.prompt).toContain('use the playback feature to go through each pick')
+  })
+})
+
+describe('requestCoach', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    vi.unstubAllGlobals()
+  })
+
+  it('surfaces the Supabase gateway error when the coach runtime is offline', async () => {
+    vi.stubEnv('VITE_SUPABASE_URL', 'http://127.0.0.1:54321')
+    vi.stubEnv('VITE_SUPABASE_ANON_KEY', 'local-anon-key')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(
+      JSON.stringify({ message: 'An unexpected error occurred' }),
+      { status: 503, headers: { 'Content-Type': 'application/json' } },
+    )))
+
+    await expect(requestCoach({ scope: 'draft', drafts: [draft(1)], messages: [
+      { role: 'user', content: 'Review my draft.' },
+    ], players: [], notes: [], memories: [] })).rejects.toThrow('The coach service is offline. Start it with `npm run coach:serve`.')
   })
 })

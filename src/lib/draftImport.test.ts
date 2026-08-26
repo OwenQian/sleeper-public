@@ -9,6 +9,7 @@ describe('importSleeperDrafts', () => {
       list: vi.fn().mockResolvedValue([]),
       get: vi.fn().mockResolvedValue(null),
       save: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
     }
     const mockDraft = {
       draft_id: 'mock-1', league_id: null, season: '2026', type: 'snake', status: 'complete',
@@ -50,6 +51,7 @@ describe('importSleeperDrafts', () => {
       list: vi.fn().mockResolvedValue([savedMock]),
       get: vi.fn().mockResolvedValue(savedMock),
       save: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
     }
     const listDrafts = vi.fn().mockResolvedValue([])
     const fetchDraftDetails = vi.fn().mockResolvedValue({

@@ -15,6 +15,27 @@ function pickName(pick: SleeperPick): string {
   return `${pick.metadata?.first_name ?? ''} ${pick.metadata?.last_name ?? ''}`.trim()
 }
 
+export function calculateTeamAuctionPower(
+  draft: SavedDraft,
+  players: Player[],
+): Record<number, number> {
+  const totals = Object.fromEntries(
+    Array.from({ length: draft.teams }, (_, index) => [index + 1, 0]),
+  ) as Record<number, number>
+  const playersBySleeperId = new Map(
+    players.filter((player) => player.sleeperId).map((player) => [player.sleeperId, player]),
+  )
+  const playersByName = new Map(players.map((player) => [normalizeName(player.name), player]))
+
+  draft.picks.forEach((pick) => {
+    const player = playersBySleeperId.get(pick.player_id) ?? playersByName.get(normalizeName(pickName(pick)))
+    if (!player || !Number.isFinite(player.auctionValue) || totals[pick.draft_slot] === undefined) return
+    totals[pick.draft_slot] += player.auctionValue
+  })
+
+  return totals
+}
+
 export function buildReplayState(
   draft: SavedDraft,
   players: Player[],

@@ -68,4 +68,17 @@ describe('createSupabaseDraftStore', () => {
 
     expect(upsert).toHaveBeenCalledWith(toDraftRow(savedDraft), { onConflict: 'id' })
   })
+
+  it('deletes only the configured user\'s draft record', async () => {
+    const eq = vi.fn().mockResolvedValue({ error: null })
+    const deleteRow = vi.fn(() => ({ eq }))
+    const from = vi.fn(() => ({ delete: deleteRow }))
+    const store = createSupabaseDraftStore({ from } as never, { userId: 'user-456' })
+
+    await store.delete('draft-123')
+
+    expect(from).toHaveBeenCalledWith('drafts')
+    expect(deleteRow).toHaveBeenCalledOnce()
+    expect(eq).toHaveBeenCalledWith('id', 'draft-123:user-456')
+  })
 })

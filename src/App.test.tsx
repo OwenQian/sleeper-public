@@ -5,6 +5,17 @@ import App from './App'
 import type { BoardStore } from './lib/boardStore'
 import type { DraftHistoryStore } from './lib/draftStore'
 import { parseRankingsCsv } from './lib/rankings'
+import type { Player } from './types'
+
+vi.mock('./lib/guidePlayerNotes', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./lib/guidePlayerNotes')>()
+  return {
+    ...actual,
+    guidePlayerNote: actual.buildGuideNoteLookup({
+      'Jahmyr Gibbs': 'Guide note: workhorse back in a fast offense.',
+    }),
+  }
+})
 
 const rankings = `Overall,Player,Position,Pos Rank,Tier,Auction (Out of $200)
 1,Jahmyr Gibbs,RB,1,1,$63
@@ -12,6 +23,15 @@ const rankings = `Overall,Player,Position,Pos Rank,Tier,Auction (Out of $200)
 3,Puka Nacua,WR,2,2,$58
 4,Josh Allen,QB,1,8,$29
 5,Lamar Jackson,QB,2,11,$17`
+
+function csvFile(contents: string): File {
+  const file = new File([contents], 'rankings.csv', { type: 'text/csv' })
+  Object.defineProperty(file, 'text', {
+    configurable: true,
+    value: vi.fn().mockResolvedValue(contents),
+  })
+  return file
+}
 
 describe('draft room', () => {
   beforeEach(() => {
@@ -31,6 +51,84 @@ describe('draft room', () => {
     expect(screen.getByText('Jahmyr Gibbs')).toBeInTheDocument()
   })
 
+  it('uses a configured store snapshot without merging initial CSV players into it', async () => {
+    const storedPlayer = {
+      ...parseRankingsCsv(rankings)[0],
+      tags: ['target'] as Player['tags'],
+      note: 'Persisted board wins',
+    }
+    const boardStore: BoardStore = {
+      load: vi.fn().mockResolvedValue({ players: [storedPlayer] }),
+      save: vi.fn().mockResolvedValue(undefined),
+    }
+
+    render(<App initialCsv={rankings} disableNetwork boardStore={boardStore} />)
+
+    await waitFor(() => expect(screen.getByText('Target', { selector: '.player-card__tag' })).toBeInTheDocument())
+    expect(screen.getAllByTestId(/^player-/)).toHaveLength(1)
+    expect(screen.queryByText('Puka Nacua')).not.toBeInTheDocument()
+  })
+
+  it('seeds and saves initial CSV players when the configured store is empty', async () => {
+    const save = vi.fn<BoardStore['save']>().mockResolvedValue(undefined)
+    const boardStore: BoardStore = {
+      load: vi.fn().mockResolvedValue(null),
+      save,
+    }
+
+    render(<App initialCsv={rankings} disableNetwork boardStore={boardStore} />)
+
+    await waitFor(() => expect(save).toHaveBeenCalledWith({
+      players: expect.arrayContaining([
+        expect.objectContaining({ id: 'jahmyr-gibbs-rb' }),
+        expect.objectContaining({ id: 'lamar-jackson-qb' }),
+      ]),
+    }))
+    expect(save.mock.calls[0][0].players).toHaveLength(5)
+  })
+
+  it('renders an empty board when no bundled rankings are available', () => {
+    render(<App initialCsv="" disableNetwork boardStore={null} />)
+
+    expect(screen.getByRole('heading', { name: 'Draft room' })).toBeInTheDocument()
+    expect(screen.getByText('0 players')).toBeInTheDocument()
+    expect(screen.queryByTestId(/^player-/)).not.toBeInTheDocument()
+  })
+
+  it('offers CSV import from both an empty board and populated board controls', () => {
+    const { unmount } = render(<App initialCsv="" disableNetwork boardStore={null} />)
+
+    expect(screen.getByRole('button', { name: 'Import rankings CSV' })).toBeInTheDocument()
+
+    unmount()
+    localStorage.clear()
+    render(<App initialCsv={rankings} disableNetwork boardStore={null} />)
+    expect(screen.getByRole('button', { name: 'Import CSV' })).toBeInTheDocument()
+  })
+
+  it('applies an imported CSV and persists the parsed board to the configured store', async () => {
+    const user = userEvent.setup()
+    const save = vi.fn<BoardStore['save']>().mockResolvedValue(undefined)
+    const boardStore: BoardStore = {
+      load: vi.fn().mockResolvedValue(null),
+      save,
+    }
+    render(<App initialCsv="" disableNetwork boardStore={boardStore} />)
+    await waitFor(() => expect(boardStore.load).toHaveBeenCalled())
+
+    await user.click(screen.getByRole('button', { name: 'Import rankings CSV' }))
+    fireEvent.drop(screen.getByRole('button', { name: 'Drop rankings CSV here or choose a file' }), {
+      dataTransfer: { files: [csvFile(rankings)] },
+    })
+    await screen.findByText('Ready to import')
+    await user.click(screen.getByRole('button', { name: 'Apply import' }))
+
+    expect(await screen.findByText('Jahmyr Gibbs')).toBeInTheDocument()
+    await waitFor(() => expect(save).toHaveBeenCalledWith({
+      players: expect.arrayContaining([expect.objectContaining({ id: 'jahmyr-gibbs-rb' })]),
+    }))
+  })
+
   it('navigates to draft history as a top-level page', async () => {
     const user = userEvent.setup()
     const draftHistoryStore: DraftHistoryStore = {
@@ -38,6 +136,7 @@ describe('draft room', () => {
       list: vi.fn().mockResolvedValue([]),
       get: vi.fn().mockResolvedValue(null),
       save: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
     }
     render(<App initialCsv={rankings} disableNetwork boardStore={null} draftHistoryStore={draftHistoryStore} />)
 
@@ -150,6 +249,34 @@ describe('draft room', () => {
     expect(save.mock.calls.at(-1)?.[0].players[0].tags).toEqual(['target', 'upside'])
   })
 
+  it('restores guide notes for legacy store snapshots with blank notes', async () => {
+    const boardStore: BoardStore = {
+      load: vi.fn().mockResolvedValue({
+        players: [{
+          id: 'jahmyr-gibbs-rb',
+          name: 'Jahmyr Gibbs',
+          position: 'RB',
+          sourcePositionRank: 1,
+          rank: 1,
+          overallTier: 1,
+          positionTier: 1,
+          auctionValue: 63,
+          tags: [],
+          unavailable: false,
+          note: '',
+        }],
+      }),
+      save: vi.fn().mockResolvedValue(undefined),
+    }
+
+    const user = userEvent.setup()
+    render(<App initialCsv="" disableNetwork boardStore={boardStore} />)
+
+    await waitFor(() => expect(screen.getByText('Jahmyr Gibbs')).toBeInTheDocument())
+    await user.click(screen.getByText('Jahmyr Gibbs'))
+    expect(screen.getByDisplayValue('Guide note: workhorse back in a fast offense.')).toBeInTheDocument()
+  })
+
   it('marks a moved ranking as edited and can restore its source position', async () => {
     const user = userEvent.setup()
     const boardStore: BoardStore = {
@@ -236,14 +363,21 @@ describe('draft room', () => {
     const dialog = screen.getByRole('dialog', { name: 'Reset draft board' })
     const rankingsOption = within(dialog).getByRole('checkbox', { name: 'Reset rankings' })
     const tagsOption = within(dialog).getByRole('checkbox', { name: 'Tags' })
+    const notesOption = within(dialog).getByRole('checkbox', { name: 'Reset notes' })
+    const availabilityOption = within(dialog).getByRole('checkbox', { name: 'Reset availability' })
     const allOption = within(dialog).getByRole('checkbox', { name: 'Reset all' })
+    expect(within(dialog).getByText(/restore pre-populated guide notes/i)).toBeInTheDocument()
     expect(rankingsOption).toBeChecked()
     expect(tagsOption).not.toBeChecked()
+    expect(notesOption).not.toBeChecked()
+    expect(availabilityOption).not.toBeChecked()
     expect(allOption).not.toBeChecked()
 
     await user.click(allOption)
     expect(rankingsOption).not.toBeChecked()
     expect(tagsOption).not.toBeChecked()
+    expect(notesOption).not.toBeChecked()
+    expect(availabilityOption).not.toBeChecked()
     expect(allOption).toBeChecked()
   })
 
@@ -362,6 +496,7 @@ describe('draft room', () => {
       list: vi.fn().mockResolvedValue([]),
       get: vi.fn().mockResolvedValue(null),
       save: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
     }
     vi.stubGlobal('fetch', vi.fn().mockImplementation(async (url: string) => ({
       ok: true,

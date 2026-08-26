@@ -30,6 +30,7 @@ describe('DraftsPage', () => {
       ]),
       get: vi.fn().mockResolvedValue(null),
       save: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
     }
 
     render(<DraftsPage store={store} onOpenDraft={onOpenDraft} autoImport={false} />)
@@ -52,12 +53,38 @@ describe('DraftsPage', () => {
       list: vi.fn().mockResolvedValue([draft({ createdAt: startedAt, syncedAt: importedAt })]),
       get: vi.fn().mockResolvedValue(null),
       save: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
     }
 
     render(<DraftsPage store={store} onOpenDraft={() => undefined} autoImport={false} />)
 
     expect(await screen.findByText(new Date(startedAt).toLocaleDateString())).toBeInTheDocument()
     expect(screen.queryByText(new Date(importedAt).toLocaleDateString())).not.toBeInTheDocument()
+  })
+
+  it('confirms and deletes a saved draft from history', async () => {
+    const user = userEvent.setup()
+    const deleteDraft = vi.fn().mockResolvedValue(undefined)
+    const store: DraftHistoryStore = {
+      userId: 'user-1',
+      list: vi.fn().mockResolvedValue([
+        draft({ draftId: 'draft-1', name: 'August mock' }),
+        draft({ draftId: 'draft-2', name: 'League draft' }),
+      ]),
+      get: vi.fn().mockResolvedValue(null),
+      save: vi.fn().mockResolvedValue(undefined),
+      delete: deleteDraft,
+    }
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+
+    render(<DraftsPage store={store} onOpenDraft={() => undefined} autoImport={false} />)
+
+    await user.click(await screen.findByRole('button', { name: 'Delete August mock' }))
+
+    expect(window.confirm).toHaveBeenCalledWith('Delete “August mock” from your draft history? This cannot be undone.')
+    await waitFor(() => expect(deleteDraft).toHaveBeenCalledWith('draft-1'))
+    expect(screen.queryByRole('heading', { name: 'August mock' })).not.toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: 'League draft' })).toBeInTheDocument()
   })
 
   it('labels mock drafts and gives their tiles a distinct treatment', async () => {
@@ -69,6 +96,7 @@ describe('DraftsPage', () => {
       ]),
       get: vi.fn().mockResolvedValue(null),
       save: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
     }
 
     render(<DraftsPage store={store} onOpenDraft={() => undefined} autoImport={false} />)
@@ -88,6 +116,7 @@ describe('DraftsPage', () => {
       list: vi.fn().mockResolvedValue([]),
       get: vi.fn().mockResolvedValue(null),
       save: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
     }
 
     render(<DraftsPage store={store} onOpenDraft={() => undefined} importDrafts={importDrafts} />)
@@ -105,6 +134,7 @@ describe('DraftsPage', () => {
       list: vi.fn().mockResolvedValue([]),
       get: vi.fn().mockResolvedValue(null),
       save: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
     }
 
     render(

@@ -1,6 +1,5 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { Player } from '../types'
-import { derivePositionTiers } from './rankings'
 
 export interface BoardSnapshot {
   players: Player[]
@@ -21,19 +20,6 @@ export function resolveBoardId(identity: BoardIdentity): string {
     return `${identity.leagueId.trim()}:${identity.userId?.trim() || 'anonymous'}`
   }
   return 'default'
-}
-
-export function mergeStoredPlayers(sourcePlayers: Player[], storedPlayers: Player[]): Player[] {
-  const sourceById = new Map(sourcePlayers.map((player) => [player.id, player]))
-  const validStored = storedPlayers
-    .filter((player) => sourceById.has(player.id) || player.position === 'K' || player.position === 'DEF')
-    .map((player) => sourceById.has(player.id) ? { ...sourceById.get(player.id)!, ...player } : player)
-  const seen = new Set(validStored.map((player) => player.id))
-  const missing = sourcePlayers.filter((player) => !seen.has(player.id))
-
-  return derivePositionTiers(
-    [...validStored, ...missing].map((player, index) => ({ ...player, rank: index + 1 })),
-  )
 }
 
 export function createSupabaseBoardStore(

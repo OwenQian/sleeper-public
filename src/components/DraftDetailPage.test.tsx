@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
 import { DraftDetailPage } from './DraftDetailPage'
@@ -16,9 +16,9 @@ const draft: SavedDraft = {
   ],
 }
 const players = [
-  { id: 'josh', sleeperId: '101', name: 'Josh Allen', position: 'QB', rank: 1 },
-  { id: 'lamar', sleeperId: '102', name: 'Lamar Jackson', position: 'QB', rank: 2 },
-  { id: 'bijan', sleeperId: '103', name: 'Bijan Robinson', position: 'RB', rank: 3 },
+  { id: 'josh', sleeperId: '101', name: 'Josh Allen', position: 'QB', rank: 1, auctionValue: 29 },
+  { id: 'lamar', sleeperId: '102', name: 'Lamar Jackson', position: 'QB', rank: 2, auctionValue: 17 },
+  { id: 'bijan', sleeperId: '103', name: 'Bijan Robinson', position: 'RB', rank: 3, auctionValue: 63 },
 ] as Player[]
 
 describe('DraftDetailPage', () => {
@@ -27,6 +27,7 @@ describe('DraftDetailPage', () => {
     const store: DraftHistoryStore = {
       userId: 'user-1', list: vi.fn().mockResolvedValue([draft]),
       get: vi.fn().mockResolvedValue(draft), save: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
     }
 
     render(<DraftDetailPage draftId="draft-1" store={store} players={players} onBack={() => undefined} />)
@@ -41,5 +42,20 @@ describe('DraftDetailPage', () => {
     expect(screen.getByTestId('draft-pick-48')).toHaveClass('draft-pick--future')
     expect(screen.getByRole('heading', { name: 'Available at this point' })).toBeInTheDocument()
     await waitFor(() => expect(screen.getByText('Bijan Robinson')).toBeInTheDocument())
+  })
+
+  it('shows each team power as the sum of drafted auction values', async () => {
+    const store: DraftHistoryStore = {
+      userId: 'user-1', list: vi.fn().mockResolvedValue([draft]),
+      get: vi.fn().mockResolvedValue(draft), save: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
+    }
+
+    render(<DraftDetailPage draftId="draft-1" store={store} players={players} onBack={() => undefined} />)
+
+    await screen.findByRole('heading', { name: 'Tuesday mock' })
+    const teamHeaders = screen.getAllByTestId('draft-team-header')
+    expect(within(teamHeaders[0]).getByText('Power $17')).toBeInTheDocument()
+    expect(within(teamHeaders[1]).getByText('Power $29')).toBeInTheDocument()
   })
 })

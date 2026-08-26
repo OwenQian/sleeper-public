@@ -20,6 +20,7 @@ describe('importSleeperMockDraftIds', () => {
       list: vi.fn().mockResolvedValue([]),
       get: vi.fn().mockResolvedValue(null),
       save: vi.fn().mockResolvedValue(undefined),
+      delete: vi.fn().mockResolvedValue(undefined),
     }
     const referenceDraft = {
       draft_id: 'official-1', league_id: 'league-1', season: '2026', status: 'pre_draft', type: 'snake',
